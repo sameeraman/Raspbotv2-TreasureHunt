@@ -17,7 +17,7 @@ import sys
 import threading
 
 from config import load_config
-from hardware.wake_word import create_wake_word_listener
+from hardware.wake_word import create_wake_word_listener, _WAKE_COMMAND_NAMES
 from hardware.motor import MotorController
 from hardware.camera import Camera
 from hardware.ultrasonic import UltrasonicSensor
@@ -173,7 +173,7 @@ class TreasureHuntApp:
         During an active session the wake word acts as an interrupt —
         Ringo stops speaking and listens fresh.
         """
-        if command == "wake_word" and self._session_active:
+        if command in _WAKE_COMMAND_NAMES and self._session_active:
             logger.info("Wake word interrupt detected mid-session")
             self._interrupt_requested = True
             # Stop any in-progress TTS immediately

@@ -46,6 +46,13 @@ _BINARY_COMMANDS = {
 # The 4th-byte values that should trigger the wake-word
 _BINARY_WAKE_BYTES = {0x5F, 0x60, 0x61}  # Hi Ringo / Hello Ringo / Ringo
 
+# Command *names* that count as a wake word — used by the app for interrupt detection.
+# Combines binary protocol names + the ASCII protocol's "wake_word" ($B000#).
+_WAKE_COMMAND_NAMES: frozenset[str] = frozenset(
+    {_BINARY_COMMANDS[b] for b in _BINARY_WAKE_BYTES if b in _BINARY_COMMANDS}
+    | {"wake_word"}
+)
+
 
 def create_wake_word_listener(on_command=None):
     """Factory that returns the configured WakeWordListener.
