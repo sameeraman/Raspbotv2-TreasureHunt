@@ -83,6 +83,15 @@ class TextToSpeech:
             if cancellation.error_details:
                 logger.error(f"Error: {cancellation.error_details}")
 
+    def stop_speaking(self):
+        """Interrupt any in-progress speech immediately."""
+        if self._synthesizer:
+            try:
+                self._synthesizer.stop_speaking_async().get()
+                logger.debug("TTS interrupted")
+            except Exception as e:
+                logger.warning(f"stop_speaking error: {e}")
+
     def speak_excited(self, text: str):
         """Speak with extra enthusiasm (for celebrations)."""
         ssml = f"""

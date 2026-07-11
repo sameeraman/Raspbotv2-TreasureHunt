@@ -13,7 +13,7 @@ import signal
 import sys
 
 from config import load_config
-from hardware.wake_word import WakeWordListener
+from hardware.wake_word import create_wake_word_listener
 from hardware.motor import MotorController
 from hardware.camera import Camera
 from hardware.ultrasonic import UltrasonicSensor
@@ -54,10 +54,9 @@ class TreasureHuntApp:
         )
         self.lights = LightController()
 
-        # Wake word: hardware serial only — no Azure connection until triggered
-        self.wake_word = WakeWordListener(
-            port=self.config.hardware.voice_module_port,
-            baudrate=self.config.hardware.voice_module_baud,
+        # Wake word: hardware serial or Porcupine (set WAKE_WORD_ENGINE in .env)
+        self.wake_word = create_wake_word_listener(
+            on_command=self._on_wake_command
         )
 
         # Speech — instantiated lazily per session (no cloud connection at startup)
@@ -126,6 +125,8 @@ class TreasureHuntApp:
     async def run(self):
         """Main application loop."""
         self._running = True
+        self._session_active = False
+        self._interrupt_requested = False
         logger.info("=" * 50)
         logger.info("  🤖 Ringo Treasure Hunt — Starting up!")
         logger.info("=" * 50)
@@ -146,6 +147,21 @@ class TreasureHuntApp:
         finally:
             self._cleanup()
 
+    def _on_wake_command(self, command: str):
+        """Called by WakeWordListener for every recognised voice command.
+
+        During an active session the wake word acts as an interrupt —
+        Ringo stops speaking and listens fresh.
+        """
+        if command == "wake_word" and self._session_active:
+            logger.info("Wake word interrupt detected mid-session")
+            self._interrupt_requested = True
+            # Stop any in-progress TTS immediately
+            try:
+                self.tts.stop_speaking()
+            except Exception:
+                pass
+
     async def _wait_and_play(self):
         """Wait for wake word, then run one treasure hunt session."""
         # Wait for "Ringo" wake word
@@ -163,6 +179,8 @@ class TreasureHuntApp:
     async def _run_session(self):
         """Run one treasure hunt play session."""
         logger.info("🎮 New treasure hunt session starting!")
+        self._session_active = True
+        self._interrupt_requested = False
         self.lights.listening()
         self.safety_plugin.start_session()
 
@@ -189,9 +207,26 @@ class TreasureHuntApp:
                 await self._end_session()
                 break
 
+            # Wake word interrupt: Ringo was mid-conversation and user said wake word
+            if self._interrupt_requested:
+                self._interrupt_requested = False
+                logger.info("Session interrupted by wake word — resuming listening")
+                self.lights.listening()
+                self.tts.speak("I'm listening!")
+
             # Listen for Sienna's voice
             self.lights.listening()
             user_text = self.stt.listen(timeout_seconds=15)
+
+            # Re-check interrupt in case it fired during the STT window
+            if self._interrupt_requested:
+                self._interrupt_requested = False
+                logger.info("Wake word fired during STT — treating as fresh input signal")
+                # user_text may already contain what was said after the wake word,
+                # or it may be None — either way continue to the next loop iteration
+                if user_text is None:
+                    self.tts.speak("Yes? I'm listening!")
+                    continue
 
             if user_text is None:
                 # No speech detected — wait for next wake word or retry
@@ -212,15 +247,17 @@ class TreasureHuntApp:
             if self.memory_manager:
                 await self.memory_manager.observe_exchange(user_text, response)
 
-            # Speak the response
+            # Speak the response — may be interrupted by wake word
             self.lights.speaking()
             self.tts.speak(response)
 
+        self._session_active = False
         self.lights.idle()
 
     async def _end_session(self):
         """End the current play session gracefully."""
         logger.info("🏁 Ending treasure hunt session")
+        self._session_active = False
 
         # Store session summary in memory
         if self.memory_manager:
