@@ -141,6 +141,14 @@ class TreasureHuntApp:
         _web._event_loop = asyncio.get_event_loop()
         logging.getLogger("ringo").addHandler(_web._ws_log_handler)
 
+        # Share hardware with the embedded web dashboard so it never tries to
+        # open /dev/video0 (or motors/lights) a second time in the same process.
+        _web._motor = self.motor
+        _web._lights = self.lights
+        _web._ultra = self.ultrasonic
+        _web._camera = self.camera
+        _web._hw_ready = True
+
         # ── Start web dashboard in background (port 8080) ─────────────────────
         def _start_uvicorn():
             import uvicorn
@@ -317,6 +325,11 @@ class TreasureHuntApp:
         hunt_requested = await self._run_chat_session()
         if hunt_requested and self._running:
             await self._run_hunt_session()
+
+        # Drain any stale wake word trigger that fired during the session
+        # and add a cooldown so STT isn't immediately reopened.
+        self.wake_word.is_triggered()
+        await asyncio.sleep(3)
 
     async def _run_hunt_session(self):
         """Run one treasure hunt play session."""
