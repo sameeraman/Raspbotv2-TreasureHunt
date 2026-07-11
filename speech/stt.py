@@ -50,8 +50,16 @@ class SpeechToText:
         logger.info("Listening for speech...")
         config = self._get_config()
 
-        # Use the default microphone
-        audio_config = speechsdk.audio.AudioConfig(use_default_microphone=True)
+        # Use specific ALSA device if set (e.g. hw:0,0 or hw:1,0),
+        # otherwise fall back to the SDK default microphone.
+        import os
+        mic_device = os.getenv("MIC_DEVICE", "").strip()
+        if mic_device:
+            logger.debug(f"Using explicit mic device: {mic_device}")
+            audio_config = speechsdk.audio.AudioConfig(device_name=mic_device)
+        else:
+            audio_config = speechsdk.audio.AudioConfig(use_default_microphone=True)
+
         recognizer = speechsdk.SpeechRecognizer(
             speech_config=config,
             audio_config=audio_config,

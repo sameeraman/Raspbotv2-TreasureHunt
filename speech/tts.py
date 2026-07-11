@@ -42,7 +42,15 @@ class TextToSpeech:
                 )
                 logger.debug("Speech config using key auth")
             config.speech_synthesis_voice_name = self.voice_name
-            audio_config = speechsdk.audio.AudioOutputConfig(use_default_speaker=True)
+
+            import os
+            speaker_device = os.getenv("SPEAKER_DEVICE", "").strip()
+            if speaker_device:
+                logger.debug(f"Using explicit speaker device: {speaker_device}")
+                audio_config = speechsdk.audio.AudioOutputConfig(device_name=speaker_device)
+            else:
+                audio_config = speechsdk.audio.AudioOutputConfig(use_default_speaker=True)
+
             self._synthesizer = speechsdk.SpeechSynthesizer(
                 speech_config=config,
                 audio_config=audio_config,
