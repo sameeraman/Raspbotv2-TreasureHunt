@@ -53,20 +53,23 @@ class TreasureHuntApp:
             stop_distance_mm=self.config.safety.obstacle_stop_distance_mm,
         )
         self.lights = LightController()
+
+        # Wake word: hardware serial only — no Azure connection until triggered
         self.wake_word = WakeWordListener(
             port=self.config.hardware.voice_module_port,
             baudrate=self.config.hardware.voice_module_baud,
         )
 
-        # Speech
+        # Speech — instantiated lazily per session (no cloud connection at startup)
+        self._speech_credential = self.config.service_principal.get_credential()
         self.stt = SpeechToText(
             speech_region=self.config.azure_speech.region,
-            credential=self.config.service_principal.get_credential(),
+            credential=self._speech_credential,
             resource_id=self.config.azure_speech.resource_id,
         )
         self.tts = TextToSpeech(
             speech_region=self.config.azure_speech.region,
-            credential=self.config.service_principal.get_credential(),
+            credential=self._speech_credential,
             resource_id=self.config.azure_speech.resource_id,
         )
 
@@ -132,7 +135,7 @@ class TreasureHuntApp:
         self.wake_word.start()
         self.lights.idle()
 
-        logger.info("Waiting for wake word 'Ringo'...")
+        logger.info("Waiting for wake word 'Hey Ringo'...")
         logger.info("(Press Ctrl+C to quit)")
 
         try:
