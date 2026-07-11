@@ -15,6 +15,7 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 
 from config import load_config
 from hardware.wake_word import create_wake_word_listener, _WAKE_COMMAND_NAMES
@@ -182,8 +183,112 @@ class TreasureHuntApp:
             except Exception:
                 pass
 
+    async def _run_chat_session(self) -> bool:
+        """Casual chat mode after wake word.
+
+        Returns True if Sienna requests a treasure hunt, False to end the interaction.
+        Automatically proposes closing after 5 minutes with no hunt request.
+        """
+        CHAT_MAX_SECS = 5 * 60
+
+        logger.info("Starting chat session")
+        self._session_active = True
+        self._interrupt_requested = False
+        self.lights.listening()
+
+        self.orchestrator.switch_to_chat_mode()
+
+        # Greet Sienna
+        try:
+            greeting = await self.orchestrator.start_chat()
+        except Exception as e:
+            logger.error(f"Chat greeting failed: {e}")
+            self._session_active = False
+            return False
+
+        self.lights.speaking()
+        self.tts.speak(greeting)
+        self.lights.listening()
+
+        chat_start = time.time()
+        timeout_offered = False
+
+        while self._running:
+            elapsed = time.time() - chat_start
+
+            # 5-minute timeout — offer to wrap up or start a hunt
+            if elapsed >= CHAT_MAX_SECS and not timeout_offered:
+                timeout_offered = True
+                logger.info("Chat timeout reached — proposing to close")
+                try:
+                    close_msg = await self.orchestrator.propose_close()
+                except Exception as e:
+                    logger.error(f"Propose close failed: {e}")
+                    break
+                self.lights.speaking()
+                self.tts.speak(close_msg)
+                self.lights.listening()
+
+            # Wake word interrupt mid-chat
+            if self._interrupt_requested:
+                self._interrupt_requested = False
+                self.tts.speak("I'm here!")
+                self.lights.listening()
+
+            # Listen
+            user_text = self.stt.listen(timeout_seconds=15)
+
+            if self._interrupt_requested:
+                self._interrupt_requested = False
+                if user_text is None:
+                    self.tts.speak("Yes? I'm here!")
+                    continue
+
+            if user_text is None:
+                if timeout_offered:
+                    # No response after timeout warning — end quietly
+                    break
+                await asyncio.sleep(0.5)
+                continue
+
+            if self._is_goodbye(user_text):
+                try:
+                    farewell = await self.orchestrator.chat(user_text)
+                    farewell = farewell.removeprefix("HUNT:").strip()
+                    self.lights.speaking()
+                    self.tts.speak(farewell)
+                except Exception as e:
+                    logger.error(f"Farewell response failed: {e}")
+                break
+
+            # Get Ringo's response
+            self.lights.thinking()
+            try:
+                response = await self.orchestrator.chat(user_text)
+            except Exception as e:
+                logger.error(f"Chat response failed: {e}")
+                continue
+
+            # HUNT: prefix signals Sienna asked for a treasure hunt
+            hunt_requested = response.startswith("HUNT:")
+            clean = response.removeprefix("HUNT:").strip()
+
+            if clean:
+                self.lights.speaking()
+                self.tts.speak(clean)
+                self.lights.listening()
+
+            if hunt_requested:
+                logger.info("Treasure hunt requested — transitioning to hunt mode")
+                self._session_active = False
+                return True
+
+        self._session_active = False
+        self.lights.idle()
+        return False
+
     async def _wait_and_play(self):
-        """Wait for wake word, then run one treasure hunt session."""
+        """Wait for wake word, then run chat → optional treasure hunt."""
         # Wait for wake word
         while self._running:
             if self.wake_word.is_triggered():
@@ -208,10 +313,12 @@ class TreasureHuntApp:
         # Brief pause so bark finishes before Ringo speaks
         await asyncio.sleep(0.8)
 
-        # Start a new session
-        await self._run_session()
+        # Chat mode first; transitions to hunt only if Sienna asks
+        hunt_requested = await self._run_chat_session()
+        if hunt_requested and self._running:
+            await self._run_hunt_session()
 
-    async def _run_session(self):
+    async def _run_hunt_session(self):
         """Run one treasure hunt play session."""
         logger.info("🎮 New treasure hunt session starting!")
         self._session_active = True

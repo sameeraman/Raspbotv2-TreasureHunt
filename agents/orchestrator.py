@@ -123,3 +123,19 @@ class RingoOrchestrator:
 
         self.chat_history = ChatHistory(system_message=system_prompt)
         logger.info("Chat history reset")
+
+    def switch_to_chat_mode(self):
+        """Switch system prompt to casual chat mode."""
+        from agents.prompts import RINGO_CHAT_SYSTEM_PROMPT
+        self.chat_history = ChatHistory(system_message=RINGO_CHAT_SYSTEM_PROMPT)
+        logger.info("Switched to chat mode")
+
+    async def start_chat(self) -> str:
+        """Generate the wake-word greeting in casual chat mode."""
+        from agents.prompts import CHAT_GREETING_PROMPT
+        return await self.chat(CHAT_GREETING_PROMPT)
+
+    async def propose_close(self) -> str:
+        """Suggest wrapping up after 5 minutes of chat."""
+        from agents.prompts import CHAT_TIMEOUT_PROMPT
+        return await self.chat(CHAT_TIMEOUT_PROMPT)
