@@ -22,12 +22,18 @@ class TextToSpeech:
                  speech_key: str = "",
                  credential: Optional[ClientSecretCredential] = None,
                  resource_id: str = ""):
+        import os
         self.speech_region = speech_region
         self.voice_name = voice_name
         self.speech_key = speech_key
         self.credential = credential
         self.resource_id = resource_id
         self._synthesizer = None
+        # SSML volume: 0-100 integer string, or named level
+        # (silent / x-soft / soft / medium / loud / x-loud).
+        # Set TTS_VOLUME in .env to override.  Default 90 is noticeably
+        # louder than the SDK default ("medium" ≈ 50).
+        self.volume: str = os.getenv("TTS_VOLUME", "90")
 
     def _get_synthesizer(self) -> speechsdk.SpeechSynthesizer:
         if not self._synthesizer:
@@ -61,11 +67,11 @@ class TextToSpeech:
         """Speak the given text aloud with child-friendly pacing."""
         logger.info(f"Speaking: '{text[:80]}...' " if len(text) > 80 else f"Speaking: '{text}'")
 
-        # Wrap in SSML for rate control
+        # Wrap in SSML for rate/volume control
         ssml = f"""
         <speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="en-AU">
             <voice name="{self.voice_name}">
-                <prosody rate="-10%" pitch="+5%">
+                <prosody rate="-10%" pitch="+5%" volume="{self.volume}">
                     {text}
                 </prosody>
             </voice>
@@ -97,7 +103,7 @@ class TextToSpeech:
         ssml = f"""
         <speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="en-AU">
             <voice name="{self.voice_name}">
-                <prosody rate="+5%" pitch="+15%" volume="+10%">
+                <prosody rate="+5%" pitch="+15%" volume="{self.volume}">
                     {text}
                 </prosody>
             </voice>

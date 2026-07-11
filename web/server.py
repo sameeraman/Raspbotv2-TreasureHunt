@@ -10,6 +10,8 @@ Provides:
 
 import asyncio
 import logging
+import os
+import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -94,7 +96,13 @@ _motor = None
 _lights = None
 _ultra = None
 _camera = None
+_tts = None
 _light_state = "idle"
+
+# Current audio levels — initialised from .env, adjustable via /api/audio
+_current_speaker_vol: int = int(os.getenv("SPEAKER_VOLUME") or "95")
+_current_mic_vol: int = int(os.getenv("MIC_VOLUME") or "85")
+_current_tts_vol: int = int(os.getenv("TTS_VOLUME") or "90")
 
 
 def _ensure_hardware():
@@ -262,6 +270,7 @@ async def api_emergency_stop():
 class MoveRequest(BaseModel):
     direction: str
     duration: float = 0.5
+    speed: int = 50
 
 
 @app.post("/api/move")
@@ -270,7 +279,7 @@ async def api_move(req: MoveRequest):
         return {"ok": False, "reason": "Hardware not ready"}
 
     log = logging.getLogger("ringo.web")
-    speed = 50
+    speed = max(10, min(100, req.speed))
     dur = max(0.1, min(3.0, req.duration))
     d = req.direction
 
@@ -338,6 +347,71 @@ async def api_lights(req: LightRequest):
     _light_state = req.state
     logging.getLogger("ringo.web").info(f"💡 Lights → {req.state}")
     return {"ok": True}
+
+
+# ─── Audio API ────────────────────────────────────────────────────────────────
+
+class AudioRequest(BaseModel):
+    speaker_volume: int | None = None
+    mic_volume: int | None = None
+    tts_volume: int | None = None
+
+
+@app.get("/api/audio")
+async def api_audio_status():
+    """Return current audio levels."""
+    return {
+        "speaker_volume": _current_speaker_vol,
+        "mic_volume": _current_mic_vol,
+        "tts_volume": _current_tts_vol,
+    }
+
+
+@app.post("/api/audio")
+async def api_audio(req: AudioRequest):
+    global _current_speaker_vol, _current_mic_vol, _current_tts_vol
+
+    card = os.getenv("ALSA_CARD", "").strip()
+    card_flag = ["-c", card] if card else []
+    log = logging.getLogger("ringo.web")
+
+    if req.speaker_volume is not None:
+        vol = max(0, min(100, req.speaker_volume))
+        try:
+            subprocess.run(
+                ["amixer", *card_flag, "-q", "sset", "Master", f"{vol}%"],
+                timeout=3, capture_output=True,
+            )
+            _current_speaker_vol = vol
+            log.info(f"🔊 Speaker volume → {vol}%")
+        except Exception as e:
+            log.warning(f"amixer Master failed: {e}")
+
+    if req.mic_volume is not None:
+        vol = max(0, min(100, req.mic_volume))
+        try:
+            subprocess.run(
+                ["amixer", *card_flag, "-q", "sset", "Capture", f"{vol}%"],
+                timeout=3, capture_output=True,
+            )
+            _current_mic_vol = vol
+            log.info(f"🎤 Mic volume → {vol}%")
+        except Exception as e:
+            log.warning(f"amixer Capture failed: {e}")
+
+    if req.tts_volume is not None:
+        vol = max(0, min(100, req.tts_volume))
+        _current_tts_vol = vol
+        if _tts:
+            _tts.volume = str(vol)
+        log.info(f"🗣 TTS volume → {vol}%")
+
+    return {
+        "ok": True,
+        "speaker_volume": _current_speaker_vol,
+        "mic_volume": _current_mic_vol,
+        "tts_volume": _current_tts_vol,
+    }
 
 
 # ─── Chat API (send text to active session) ───────────────────────────────────

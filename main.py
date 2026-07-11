@@ -147,6 +147,7 @@ class TreasureHuntApp:
         _web._lights = self.lights
         _web._ultra = self.ultrasonic
         _web._camera = self.camera
+        _web._tts = self.tts
         _web._hw_ready = True
 
         # ── Start web dashboard in background (port 8080) ─────────────────────
@@ -159,6 +160,9 @@ class TreasureHuntApp:
         logger.info("=" * 50)
         logger.info("  🤖 Ringo Treasure Hunt — Starting up!")
         logger.info("=" * 50)
+
+        # Set ALSA audio levels before hardware init
+        self._set_audio_levels()
 
         # Initialize hardware
         self.camera.open()
@@ -432,6 +436,47 @@ class TreasureHuntApp:
         ]
         text_lower = text.lower()
         return any(phrase in text_lower for phrase in goodbye_phrases)
+
+    def _set_audio_levels(self):
+        """Set ALSA speaker and microphone levels from environment variables.
+
+        Configure in .env:
+            SPEAKER_VOLUME=90   # 0-100 — sets Master volume on the ALSA card
+            MIC_VOLUME=80       # 0-100 — sets Capture volume on the ALSA card
+            ALSA_CARD=1         # card index if not the system default (e.g. USB audio)
+        """
+        card_flag = []
+        card = os.getenv("ALSA_CARD", "").strip()
+        if card:
+            card_flag = ["-c", card]
+
+        speaker_vol = os.getenv("SPEAKER_VOLUME", "").strip()
+        if speaker_vol:
+            try:
+                result = subprocess.run(
+                    ["amixer", *card_flag, "-q", "sset", "Master", f"{speaker_vol}%"],
+                    timeout=3, capture_output=True,
+                )
+                if result.returncode == 0:
+                    logger.info(f"Speaker (Master) volume set to {speaker_vol}%")
+                else:
+                    logger.warning(f"amixer Master failed: {result.stderr.decode().strip()}")
+            except Exception as e:
+                logger.warning(f"Could not set speaker volume: {e}")
+
+        mic_vol = os.getenv("MIC_VOLUME", "").strip()
+        if mic_vol:
+            try:
+                result = subprocess.run(
+                    ["amixer", *card_flag, "-q", "sset", "Capture", f"{mic_vol}%"],
+                    timeout=3, capture_output=True,
+                )
+                if result.returncode == 0:
+                    logger.info(f"Mic (Capture) volume set to {mic_vol}%")
+                else:
+                    logger.warning(f"amixer Capture failed: {result.stderr.decode().strip()}")
+            except Exception as e:
+                logger.warning(f"Could not set mic volume: {e}")
 
     def _cleanup(self):
         """Clean shutdown of all hardware."""

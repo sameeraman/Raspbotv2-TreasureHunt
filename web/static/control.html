@@ -197,10 +197,16 @@
       </div>
       <div class="card-body">
         <div class="dur-row">
-          <span>Duration</span>
+          <span style="min-width:68px">Speed</span>
+          <input type="range" id="speed" min="10" max="100" step="5" value="50"
+                 oninput="document.getElementById('speed-label').textContent=this.value+'%'">
+          <span id="speed-label" style="min-width:36px;color:var(--text);font-weight:600;">50%</span>
+        </div>
+        <div class="dur-row">
+          <span style="min-width:68px">Duration</span>
           <input type="range" id="duration" min="0.2" max="3.0" step="0.1" value="0.5"
                  oninput="document.getElementById('dur-label').textContent=this.value+'s'">
-          <span id="dur-label">0.5s</span>
+          <span id="dur-label" style="min-width:36px;color:var(--text);font-weight:600;">0.5s</span>
         </div>
 
         <!-- D-pad -->
@@ -304,6 +310,43 @@
     </div>
 
   </div><!-- .grid-2 -->
+
+  <!-- Audio controls -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">Audio Levels</span>
+      <span id="audio-saved" style="font-size:.78rem;color:var(--success);
+            margin-left:auto;opacity:0;transition:opacity .5s;">Applied ✓</span>
+    </div>
+    <div class="card-body">
+      <div class="dur-row">
+        <span style="min-width:80px">🔊 Speaker</span>
+        <input type="range" id="speaker-vol" min="0" max="100" step="5" value="95"
+               oninput="document.getElementById('speaker-vol-lbl').textContent=this.value+'%'"
+               onchange="setAudio()">
+        <span id="speaker-vol-lbl" style="min-width:36px;color:var(--text);font-weight:600;">95%</span>
+      </div>
+      <div class="dur-row">
+        <span style="min-width:80px">🎤 Mic</span>
+        <input type="range" id="mic-vol" min="0" max="100" step="5" value="85"
+               oninput="document.getElementById('mic-vol-lbl').textContent=this.value+'%'"
+               onchange="setAudio()">
+        <span id="mic-vol-lbl" style="min-width:36px;color:var(--text);font-weight:600;">85%</span>
+      </div>
+      <div class="dur-row" style="margin-bottom:0">
+        <span style="min-width:80px">🗣 TTS</span>
+        <input type="range" id="tts-vol" min="0" max="100" step="5" value="90"
+               oninput="document.getElementById('tts-vol-lbl').textContent=this.value+'%'"
+               onchange="setAudio()">
+        <span id="tts-vol-lbl" style="min-width:36px;color:var(--text);font-weight:600;">90%</span>
+      </div>
+      <div style="margin-top:12px;font-size:.75rem;color:var(--muted);line-height:1.7;">
+        <div>🔊 ALSA Master output — affects all audio on this card</div>
+        <div>🎤 ALSA Capture input — microphone sensitivity</div>
+        <div>🗣 Azure TTS SSML volume — takes effect on next speech</div>
+      </div>
+    </div>
+  </div>
 
 </div><!-- .main -->
 
@@ -414,10 +457,11 @@ function updateLightDisplay(state) {
 // ── Controls ─────────────────────────────────────────────────────────────────
 async function move(direction) {
   const dur = parseFloat(document.getElementById('duration').value);
+  const spd = parseInt(document.getElementById('speed').value);
   const res = await fetch('/api/move', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ direction, duration: dur }),
+    body: JSON.stringify({ direction, duration: dur, speed: spd }),
   });
   const data = await res.json();
   if (!data.ok && data.reason) {
@@ -444,7 +488,36 @@ async function emergencyStop() {
   await fetch('/api/emergency-stop', { method: 'POST' });
 }
 
-// ── Keyboard shortcut ─────────────────────────────────────────────────────────
+async function setAudio() {
+  const res = await fetch('/api/audio', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      speaker_volume: parseInt(document.getElementById('speaker-vol').value),
+      mic_volume:     parseInt(document.getElementById('mic-vol').value),
+      tts_volume:     parseInt(document.getElementById('tts-vol').value),
+    }),
+  });
+  const data = await res.json();
+  if (data.ok) {
+    const el = document.getElementById('audio-saved');
+    el.style.opacity = '1';
+    setTimeout(() => el.style.opacity = '0', 1500);
+  }
+}
+
+async function loadAudioLevels() {
+  try {
+    const d = await (await fetch('/api/audio')).json();
+    document.getElementById('speaker-vol').value = d.speaker_volume;
+    document.getElementById('speaker-vol-lbl').textContent = d.speaker_volume + '%';
+    document.getElementById('mic-vol').value = d.mic_volume;
+    document.getElementById('mic-vol-lbl').textContent = d.mic_volume + '%';
+    document.getElementById('tts-vol').value = d.tts_volume;
+    document.getElementById('tts-vol-lbl').textContent = d.tts_volume + '%';
+  } catch(e) {}
+}
+
 document.addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT') return;
   const keyMap = {
@@ -466,6 +539,7 @@ document.addEventListener('keydown', (e) => {
 // ── Init ─────────────────────────────────────────────────────────────────────
 connectSensors();
 connectCamera();
+loadAudioLevels();
 </script>
 </body>
 </html>
