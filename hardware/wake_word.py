@@ -31,26 +31,20 @@ from utils import setup_logger
 
 logger = setup_logger("ringo.wakeword")
 
-# ASCII command codes that trigger the wake word
-_WAKE_CODES = {
-    "$B000#",   # default wake word ("Hi Yahboom")
-    "$B095#",   # Custom Command A  — program "Hey Ringo" here
+# Binary protocol: 4th byte value → command name
+# Values come from the Yahboom configuration tool (semantic tag + offset).
+# Extend this dict as you add more programmed commands.
+_BINARY_COMMANDS = {
+    0x5D: "garbage_sorting",
+    0x5E: "what_garbage",
+    0x5F: "hi_ringo",       # wake word
+    0x60: "hello_ringo",    # wake word
+    0x61: "ringo",          # wake word
+    0x62: "command_four",
 }
 
-# Map ASCII command codes to human-readable names (for logging/callbacks)
-_COMMAND_NAMES = {
-    "$B000#": "wake_word",
-    "$B001#": "stop",          "$B002#": "stop_alt",
-    "$B003#": "sleep",         "$B004#": "go_ahead",
-    "$B005#": "back",          "$B006#": "turn_left",
-    "$B007#": "turn_right",    "$B008#": "spin_left",
-    "$B009#": "spin_right",
-    "$B095#": "custom_A",      "$B096#": "custom_B",
-    "$B097#": "custom_C",      "$B098#": "custom_D",
-    "$B099#": "custom_E",      "$B100#": "custom_F",
-    "$B101#": "custom_G",      "$B102#": "custom_H",
-    "$B103#": "custom_I",      "$B104#": "custom_J",
-}
+# The 4th-byte values that should trigger the wake-word
+_BINARY_WAKE_BYTES = {0x5F, 0x60, 0x61}  # Hi Ringo / Hello Ringo / Ringo
 
 
 def create_wake_word_listener(on_command=None):
@@ -172,8 +166,17 @@ class WakeWordListener:
                     # Accept any confidence byte (0x5F–0x61 = 95–97%)
                     step = 5
                 elif b == 0xFB and step == 5:
-                    logger.info(f"Wake word detected! cmd=0x{cmd_id:02X} confidence={confidence} ({confidence}%)")
-                    self._handle_binary_wake()
+                    # confidence byte IS the command identifier in this firmware
+                    cmd_name = _BINARY_COMMANDS.get(confidence, f"cmd_0x{confidence:02X}")
+                    is_wake = confidence in _BINARY_WAKE_BYTES
+                    logger.info(
+                        f"Voice command: '{cmd_name}' (0x{confidence:02X}) wake={is_wake}"
+                    )
+                    if is_wake:
+                        with self._lock:
+                            self._triggered = True
+                    if self._on_command:
+                        self._on_command(cmd_name)
                     step = 1
                 else:
                     step = 1
@@ -183,19 +186,18 @@ class WakeWordListener:
                 logger.error(f"Serial read error: {e}")
                 time.sleep(0.5)
 
-    def _handle_binary_wake(self):
-        logger.info("Wake word detected (binary protocol)")
-        with self._lock:
-            self._triggered = True
-        if self._on_command:
-            self._on_command("wake_word")
-
     def _handle_ascii_command(self, token: str):
-        name = _COMMAND_NAMES.get(token, token)
-        logger.info(f"Voice command received: {token} → {name}")
+        # ASCII protocol is for CSK4002/CI1302 standalone modules
+        ascii_names = {
+            "$B000#": "wake_word", "$B095#": "hi_ringo",
+            "$B096#": "hello_ringo", "$B097#": "ringo",
+        }
+        ascii_wake = {"$B000#", "$B095#", "$B096#", "$B097#"}
+        name = ascii_names.get(token, token)
+        logger.info(f"ASCII voice command: {token} → {name}")
         if self._on_command:
             self._on_command(name)
-        if token in _WAKE_CODES:
+        if token in ascii_wake:
             logger.info(f"Wake word triggered by {token}")
             with self._lock:
                 self._triggered = True

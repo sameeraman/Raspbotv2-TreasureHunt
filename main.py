@@ -9,8 +9,12 @@ This is the main loop that ties everything together:
 """
 
 import asyncio
+import logging
+import os
 import signal
+import subprocess
 import sys
+import threading
 
 from config import load_config
 from hardware.wake_word import create_wake_word_listener
@@ -38,6 +42,9 @@ class TreasureHuntApp:
     def __init__(self):
         self.config = load_config()
         self._running = False
+        # Initialised here so _on_wake_command is safe even before run() is called
+        self._session_active = False
+        self._interrupt_requested = False
 
         # Create token provider from service principal
         token_provider = self.config.service_principal.get_token_provider()
@@ -127,6 +134,19 @@ class TreasureHuntApp:
         self._running = True
         self._session_active = False
         self._interrupt_requested = False
+
+        # ── Wire Python logger → web dashboard WebSocket ─────────────────────
+        import web.server as _web
+        _web._event_loop = asyncio.get_event_loop()
+        logging.getLogger("ringo").addHandler(_web._ws_log_handler)
+
+        # ── Start web dashboard in background (port 8080) ─────────────────────
+        def _start_uvicorn():
+            import uvicorn
+            uvicorn.run(_web.app, host="0.0.0.0", port=8080, log_level="warning")
+        _web_thread = threading.Thread(target=_start_uvicorn, daemon=True)
+        _web_thread.start()
+        logger.info("Web dashboard started on http://0.0.0.0:8080")
         logger.info("=" * 50)
         logger.info("  🤖 Ringo Treasure Hunt — Starting up!")
         logger.info("=" * 50)
@@ -164,7 +184,7 @@ class TreasureHuntApp:
 
     async def _wait_and_play(self):
         """Wait for wake word, then run one treasure hunt session."""
-        # Wait for "Ringo" wake word
+        # Wait for wake word
         while self._running:
             if self.wake_word.is_triggered():
                 break
@@ -172,6 +192,21 @@ class TreasureHuntApp:
 
         if not self._running:
             return
+
+        # Play dog bark as acknowledgement
+        bark_path = os.path.join(os.path.dirname(__file__), "dog-bark.wav")
+        speaker = os.getenv("SPEAKER_DEVICE", "plughw:3,0")
+        try:
+            subprocess.Popen(
+                ["aplay", "-D", speaker, bark_path],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except Exception as e:
+            logger.warning(f"Could not play dog bark: {e}")
+
+        # Brief pause so bark finishes before Ringo speaks
+        await asyncio.sleep(0.8)
 
         # Start a new session
         await self._run_session()
