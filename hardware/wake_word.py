@@ -3,8 +3,8 @@
 Two serial protocols are supported:
 
 BINARY (original Raspbot V2 built-in module):
-    Module sends: AA 55 [00-06] 00 FB
-    ID 0x00 = wake word ("Hi Yahboom"), 0x01-0x06 = other commands
+    Module sends: AA 55 [CMD_ID_1] [CMD_ID_2] FB
+    CMD_ID_1 = 0x00 for all Ringo commands; CMD_ID_2 identifies the phrase
 
 ASCII (CSK4002 / CI1302 standalone module - Voice-interaction-module repo):
     Module sends ASCII strings:  $BXXX#
@@ -64,7 +64,7 @@ class WakeWordListener:
     """Wake-word listener supporting both Yahboom binary and ASCII serial protocols.
 
     Binary protocol (built-in Raspbot V2 module):
-        Detects  AA 55 [00-06] 00 FB  byte sequences.
+        Detects  AA 55 [CMD_ID_1] [CMD_ID_2] FB  byte sequences.
 
     ASCII protocol (CSK4002 / CI1302 standalone module):
         Detects  $BXXX#  strings.  _WAKE_CODES controls which trigger the
@@ -125,8 +125,8 @@ class WakeWordListener:
         """Read bytes, auto-detect protocol, fire callbacks."""
         buffer = b""
         step = 1   # binary state machine step
-        cmd_id = 0
-        confidence = 0
+        cmd_id_1 = 0
+        cmd_id_2 = 0
 
         while self._running:
             if not self._ser or not self._ser.is_open:
@@ -151,26 +151,24 @@ class WakeWordListener:
                         buffer = b""  # discard garbage
                     continue
 
-                # Binary protocol state machine: AA 55 [CMD_ID] [CONFIDENCE] FB
-                # After reprogramming: byte 3 = command ID (0x00 = wake word)
-                #                      byte 4 = confidence score (0x5F-0x61 = 95-97%)
+                # Binary protocol state machine: AA 55 [CMD_ID_1] [CMD_ID_2] FB
+                # byte 3 = CMD_ID_1 (0x00 for all Ringo commands)
+                # byte 4 = CMD_ID_2 (identifies the specific phrase)
                 if b == 0xAA and step == 1:
                     step = 2
                 elif b == 0x55 and step == 2:
                     step = 3
                 elif step == 3:
-                    cmd_id = b
+                    cmd_id_1 = b
                     step = 4
                 elif step == 4:
-                    confidence = b
-                    # Accept any confidence byte (0x5F–0x61 = 95–97%)
+                    cmd_id_2 = b
                     step = 5
                 elif b == 0xFB and step == 5:
-                    # confidence byte IS the command identifier in this firmware
-                    cmd_name = _BINARY_COMMANDS.get(confidence, f"cmd_0x{confidence:02X}")
-                    is_wake = confidence in _BINARY_WAKE_BYTES
+                    cmd_name = _BINARY_COMMANDS.get(cmd_id_2, f"cmd_0x{cmd_id_1:02X}_{cmd_id_2:02X}")
+                    is_wake = cmd_id_2 in _BINARY_WAKE_BYTES
                     logger.info(
-                        f"Voice command: '{cmd_name}' (0x{confidence:02X}) wake={is_wake}"
+                        f"Voice command: '{cmd_name}' (CMD_ID_1=0x{cmd_id_1:02X} CMD_ID_2=0x{cmd_id_2:02X}) wake={is_wake}"
                     )
                     if is_wake:
                         with self._lock:
