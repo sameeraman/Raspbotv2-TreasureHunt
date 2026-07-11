@@ -251,6 +251,26 @@ class TreasureHuntApp:
 
 def main():
     """Entry point."""
+    import argparse
+    parser = argparse.ArgumentParser(description="Raspbotv2 Treasure Hunt")
+    parser.add_argument(
+        "--web",
+        action="store_true",
+        help="Start the web dashboard instead of the voice-driven loop. "
+             "Open http://localhost:8080 to control the robot.",
+    )
+    parser.add_argument("--host", default="0.0.0.0", help="Web dashboard bind host (default: 0.0.0.0)")
+    parser.add_argument("--port", type=int, default=8080, help="Web dashboard port (default: 8080)")
+    args = parser.parse_args()
+
+    if args.web:
+        import uvicorn
+        print(f"🌐  Starting Ringo web dashboard on http://{args.host}:{args.port}")
+        print(f"    Dashboard:   http://localhost:{args.port}/")
+        print(f"    Remote ctrl: http://localhost:{args.port}/control")
+        uvicorn.run("web.server:app", host=args.host, port=args.port, log_level="warning")
+        return
+
     app = TreasureHuntApp()
 
     # Handle SIGTERM gracefully
