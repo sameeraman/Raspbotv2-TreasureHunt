@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Ringo — Remote Control</title>
+<style>
+  :root {
+    --bg:      #07070f;
+    --surface: #0f0f1e;
+    --surface2:#161628;
+    --border:  #22223a;
+    --accent:  #7c6af7;
+    --success: #00d4aa;
+    --warning: #ffb347;
+    --danger:  #ff4455;
+    --text:    #ddddf5;
+    --muted:   #6868a0;
+    --font-mono:'Courier New',Courier,monospace;
+    --font-ui:  -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:var(--bg); color:var(--text); font-family:var(--font-ui);
+         min-height:100vh; display:flex; flex-direction:column; }
+
+  /* ── Nav ── */
+  nav { background:var(--surface); border-bottom:1px solid var(--border);
+        padding:0 24px; height:52px; display:flex; align-items:center; gap:16px;
+        position:sticky; top:0; z-index:100; }
+  .logo { font-size:1.1rem; font-weight:700; letter-spacing:1px; color:var(--accent);
+          text-decoration:none; display:flex; align-items:center; gap:8px; }
+  .logo span { opacity:.6; font-size:.85rem; }
+  nav a { color:var(--muted); text-decoration:none; font-size:.9rem; padding:4px 10px;
+          border-radius:6px; transition:.15s; }
+  nav a:hover,nav a.active { color:var(--text); background:var(--surface2); }
+  nav a.active { color:var(--accent); }
+  .spacer { flex:1; }
+  #ws-dot { width:8px; height:8px; border-radius:50%; background:var(--muted); transition:background .3s; }
+  #ws-dot.ok { background:var(--success); box-shadow:0 0 6px var(--success); }
+  #ws-dot.err { background:var(--danger); }
+
+  /* ── Layout ── */
+  .main { flex:1; padding:20px 24px; display:flex; flex-direction:column; gap:16px;
+          max-width:1400px; width:100%; margin:0 auto; }
+
+  .grid-2 { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  .grid-3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:16px; }
+  @media(max-width:960px) { .grid-2,.grid-3 { grid-template-columns:1fr; } }
+
+  /* ── Cards ── */
+  .card { background:var(--surface); border:1px solid var(--border); border-radius:10px; overflow:hidden; }
+  .card-header { padding:11px 18px; border-bottom:1px solid var(--border); display:flex;
+                 align-items:center; gap:10px; }
+  .card-title { font-size:.78rem; text-transform:uppercase; letter-spacing:1px;
+                color:var(--muted); font-weight:600; }
+  .card-body { padding:16px 18px; }
+
+  /* ── Camera ── */
+  #camera-feed { width:100%; aspect-ratio:4/3; object-fit:cover; border-radius:6px;
+                 background:#000; display:block; }
+  .camera-placeholder { width:100%; aspect-ratio:4/3; background:#000;
+                         border-radius:6px; display:flex; flex-direction:column;
+                         align-items:center; justify-content:center; gap:10px;
+                         color:var(--muted); font-size:.85rem; border:1px solid var(--border); }
+  .camera-placeholder .icon { font-size:2.5rem; opacity:.3; }
+  .cam-meta { display:flex; gap:14px; margin-top:10px; font-size:.78rem; color:var(--muted); }
+
+  /* ── D-pad ── */
+  .dpad-wrap { display:flex; flex-direction:column; align-items:center; gap:10px; padding:8px 0; }
+  .dpad-row { display:flex; gap:8px; align-items:center; }
+  .dpad-btn { width:68px; height:68px; border-radius:10px; font-size:1.3rem;
+              background:var(--surface2); border:1px solid var(--border);
+              color:var(--text); cursor:pointer; transition:.1s; display:flex;
+              align-items:center; justify-content:center; font-family:inherit;
+              user-select:none; }
+  .dpad-btn:hover { background:var(--accent); border-color:var(--accent); color:#fff;
+                    transform:scale(1.05); }
+  .dpad-btn:active { transform:scale(.95); }
+  .dpad-btn.stop-btn { background:rgba(255,68,85,.15); border-color:var(--danger);
+                       color:var(--danger); }
+  .dpad-btn.stop-btn:hover { background:var(--danger); color:#fff; }
+  .dpad-filler { width:68px; height:68px; }
+
+  /* Strafe row */
+  .strafe-row { display:flex; gap:8px; justify-content:center; margin-top:4px; }
+  .strafe-btn { height:44px; padding:0 20px; border-radius:8px; font-size:.85rem;
+                background:var(--surface2); border:1px solid var(--border);
+                color:var(--muted); cursor:pointer; transition:.15s; }
+  .strafe-btn:hover { color:var(--text); background:var(--border); }
+
+  /* Gestures */
+  .gesture-row { display:flex; gap:8px; justify-content:center; margin-top:8px;
+                 flex-wrap:wrap; }
+  .gesture-btn { padding:8px 16px; border-radius:7px; font-size:.82rem;
+                 background:var(--surface2); border:1px solid var(--border);
+                 color:var(--muted); cursor:pointer; transition:.15s; }
+  .gesture-btn:hover { color:var(--text); border-color:var(--accent); color:var(--accent); }
+
+  /* Duration slider */
+  .dur-row { display:flex; align-items:center; gap:10px; margin-bottom:10px;
+             font-size:.82rem; color:var(--muted); }
+  input[type=range] { flex:1; accent-color:var(--accent); }
+  #dur-label { min-width:36px; color:var(--text); font-weight:600; }
+
+  /* ── Sensor panel ── */
+  .sensor-item { display:flex; flex-direction:column; gap:6px; margin-bottom:16px; }
+  .sensor-label { font-size:.75rem; text-transform:uppercase; letter-spacing:1px; color:var(--muted); }
+  .sensor-val { font-size:2rem; font-weight:700; font-family:var(--font-mono); color:var(--accent); }
+  .sensor-val.warn { color:var(--warning); }
+  .sensor-val.danger { color:var(--danger); }
+  .obstacle-badge { display:inline-flex; align-items:center; gap:6px; padding:4px 12px;
+                    border-radius:20px; font-size:.82rem; font-weight:600; }
+  .obstacle-badge.clear { background:rgba(0,212,170,.12); color:var(--success); }
+  .obstacle-badge.blocked { background:rgba(255,68,85,.15); color:var(--danger); }
+  .dist-bar { height:8px; border-radius:4px; background:var(--surface2);
+              overflow:hidden; margin-top:6px; }
+  .dist-fill { height:100%; border-radius:4px; background:var(--success);
+               transition:width .4s ease, background .4s; }
+
+  /* ── Lights panel ── */
+  .light-indicator { display:flex; align-items:center; gap:12px; margin-bottom:16px; }
+  .light-blob { width:40px; height:40px; border-radius:50%; background:#333;
+                transition:background .4s, box-shadow .4s; }
+  .light-name { font-size:1rem; font-weight:600; color:var(--text); }
+  .light-desc { font-size:.78rem; color:var(--muted); }
+
+  .light-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
+  .light-btn { padding:10px 8px; border-radius:8px; font-size:.8rem; text-align:center;
+               background:var(--surface2); border:1px solid var(--border);
+               color:var(--muted); cursor:pointer; transition:.15s; }
+  .light-btn:hover { border-color:var(--accent); color:var(--accent); }
+  .light-btn.active { border-color:currentColor; }
+
+  /* light state colors */
+  .light-state-idle     .light-blob { background:#282840; box-shadow:0 0 12px #282840; }
+  .light-state-listening .light-blob { background:var(--success); box-shadow:0 0 16px var(--success); }
+  .light-state-thinking  .light-blob { background:var(--accent); box-shadow:0 0 16px var(--accent); animation:throb 1.2s infinite; }
+  .light-state-speaking  .light-blob { background:var(--warning); box-shadow:0 0 16px var(--warning); }
+  .light-state-treasure  .light-blob { background:#ffd700; box-shadow:0 0 20px #ffd700; animation:rainbow 1.5s infinite; }
+  .light-state-off       .light-blob { background:#111; box-shadow:none; }
+  @keyframes throb { 0%,100%{opacity:1}50%{opacity:.5} }
+  @keyframes rainbow { 0%{background:#f00}16%{background:#f80}33%{background:#ff0}
+                       50%{background:#0f0}66%{background:#00f}83%{background:#90f}100%{background:#f00} }
+
+  /* ── Emergency strip ── */
+  .emergency-strip { display:flex; align-items:center; gap:12px; }
+  .btn-emg { flex:1; padding:14px; font-size:.95rem; letter-spacing:1px; border-radius:9px;
+             background:rgba(255,68,85,.1); color:var(--danger); border:2px solid var(--danger);
+             cursor:pointer; font-weight:700; transition:.15s; font-family:inherit; }
+  .btn-emg:hover { background:var(--danger); color:#fff; }
+</style>
+</head>
+<body>
+
+<nav>
+  <a href="/" class="logo">🤖 Ringo <span>Dashboard</span></a>
+  <a href="/">📊 Logs</a>
+  <a href="/control" class="active">🕹 Control</a>
+  <div class="spacer"></div>
+  <div id="ws-dot"></div>
+</nav>
+
+<div class="main">
+
+  <!-- Emergency row -->
+  <div class="emergency-strip">
+    <button class="btn-emg" onclick="emergencyStop()">🛑 EMERGENCY STOP</button>
+  </div>
+
+  <!-- Camera + Controls row -->
+  <div class="grid-2">
+
+    <!-- Camera feed -->
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Camera Feed</span>
+        <span id="cam-fps" style="color:var(--muted);font-size:.78rem;margin-left:auto;"></span>
+      </div>
+      <div class="card-body">
+        <img id="camera-feed" style="display:none;" alt="Camera feed">
+        <div class="camera-placeholder" id="cam-placeholder">
+          <div class="icon">📷</div>
+          <div>No camera signal</div>
+          <div style="font-size:.7rem;opacity:.6;">Camera stream will appear here when active</div>
+        </div>
+        <div class="cam-meta">
+          <span>Live WebSocket stream</span>
+          <span id="cam-status" style="color:var(--muted)">● Waiting</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Movement controls -->
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Movement</span>
+      </div>
+      <div class="card-body">
+        <div class="dur-row">
+          <span>Duration</span>
+          <input type="range" id="duration" min="0.2" max="3.0" step="0.1" value="0.5"
+                 oninput="document.getElementById('dur-label').textContent=this.value+'s'">
+          <span id="dur-label">0.5s</span>
+        </div>
+
+        <!-- D-pad -->
+        <div class="dpad-wrap">
+          <div class="dpad-row">
+            <div class="dpad-filler"></div>
+            <button class="dpad-btn" onclick="move('forward')" title="Forward">▲</button>
+            <div class="dpad-filler"></div>
+          </div>
+          <div class="dpad-row">
+            <button class="dpad-btn" onclick="move('rotate_left')" title="Rotate left">↺</button>
+            <button class="dpad-btn stop-btn" onclick="move('stop')" title="Stop">■</button>
+            <button class="dpad-btn" onclick="move('rotate_right')" title="Rotate right">↻</button>
+          </div>
+          <div class="dpad-row">
+            <div class="dpad-filler"></div>
+            <button class="dpad-btn" onclick="move('backward')" title="Backward">▼</button>
+            <div class="dpad-filler"></div>
+          </div>
+        </div>
+
+        <!-- Strafe (Mecanum) -->
+        <div class="strafe-row">
+          <button class="strafe-btn" onclick="move('strafe_left')">◀ Strafe L</button>
+          <button class="strafe-btn" onclick="move('strafe_right')">Strafe R ▶</button>
+        </div>
+
+        <!-- Gestures -->
+        <div class="gesture-row">
+          <button class="gesture-btn" onclick="move('nod')">↕ Nod</button>
+          <button class="gesture-btn" onclick="move('shake')">↔ Shake</button>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- .grid-2 -->
+
+  <!-- Sensors + Lights row -->
+  <div class="grid-2">
+
+    <!-- Sensor readings -->
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Sensors</span>
+        <span id="sensor-ts" style="font-size:.75rem;color:var(--muted);margin-left:auto;"></span>
+      </div>
+      <div class="card-body">
+        <div class="sensor-item">
+          <div class="sensor-label">Ultrasonic Distance</div>
+          <div class="sensor-val" id="dist-val">—</div>
+          <div class="dist-bar"><div class="dist-fill" id="dist-fill" style="width:0%"></div></div>
+        </div>
+
+        <div class="sensor-item">
+          <div class="sensor-label">Obstacle Detection</div>
+          <div class="obstacle-badge clear" id="obstacle-badge">
+            ● CLEAR
+          </div>
+        </div>
+
+        <div style="margin-top:12px;padding:10px 14px;background:var(--surface2);
+                    border-radius:8px;font-size:.78rem;color:var(--muted);line-height:1.7;">
+          <div>📡 Sensor updates every 500ms via WebSocket</div>
+          <div>🔴 Red if obstacle within stop distance</div>
+          <div>Bar range: 0–2000mm</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- LED lights -->
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">LED Light Bar</span>
+      </div>
+      <div class="card-body">
+        <div class="light-indicator light-state-idle" id="light-indicator">
+          <div class="light-blob" id="light-blob"></div>
+          <div>
+            <div class="light-name" id="light-name">Idle</div>
+            <div class="light-desc" id="light-desc">Dim white — waiting</div>
+          </div>
+        </div>
+
+        <div style="font-size:.75rem;text-transform:uppercase;letter-spacing:1px;
+                    color:var(--muted);margin-bottom:10px;">Set state</div>
+        <div class="light-grid">
+          <button class="light-btn" style="color:#6868a0;border-color:#6868a0;"
+                  onclick="setLight('idle')">⬜ Idle</button>
+          <button class="light-btn" style="color:var(--success);"
+                  onclick="setLight('listening')">🟢 Listen</button>
+          <button class="light-btn" style="color:var(--accent);"
+                  onclick="setLight('thinking')">🔵 Think</button>
+          <button class="light-btn" style="color:var(--warning);"
+                  onclick="setLight('speaking')">🟡 Speak</button>
+          <button class="light-btn" style="color:#ffd700;"
+                  onclick="setLight('treasure')">✨ Found!</button>
+          <button class="light-btn" style="color:var(--muted);"
+                  onclick="setLight('off')">⬛ Off</button>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- .grid-2 -->
+
+</div><!-- .main -->
+
+<script>
+// ── WebSocket for sensors ────────────────────────────────────────────────────
+let sensorWs = null;
+let cameraWs = null;
+let lastFrameTime = 0;
+let frameCount = 0;
+
+function connectSensors() {
+  sensorWs = new WebSocket(`ws://${location.host}/ws/sensors`);
+  sensorWs.onopen = () => document.getElementById('ws-dot').className = 'ok';
+  sensorWs.onmessage = (e) => {
+    const d = JSON.parse(e.data);
+    if (d.ping) return;
+    updateSensors(d);
+  };
+  sensorWs.onclose = () => {
+    document.getElementById('ws-dot').className = 'err';
+    setTimeout(connectSensors, 2000);
+  };
+  sensorWs.onerror = () => sensorWs.close();
+}
+
+function connectCamera() {
+  cameraWs = new WebSocket(`ws://${location.host}/ws/camera`);
+  cameraWs.onmessage = (e) => {
+    const d = JSON.parse(e.data);
+    if (d.ping || !d.frame) return;
+
+    const img = document.getElementById('camera-feed');
+    const ph  = document.getElementById('cam-placeholder');
+    img.src = 'data:image/jpeg;base64,' + d.frame;
+    img.style.display = 'block';
+    ph.style.display  = 'none';
+    document.getElementById('cam-status').style.color = 'var(--success)';
+    document.getElementById('cam-status').textContent = '● Live';
+
+    // FPS counter
+    frameCount++;
+    const now = Date.now();
+    if (now - lastFrameTime >= 2000) {
+      const fps = (frameCount / ((now - lastFrameTime) / 1000)).toFixed(1);
+      document.getElementById('cam-fps').textContent = `${fps} fps`;
+      frameCount = 0;
+      lastFrameTime = now;
+    }
+  };
+  cameraWs.onclose = () => {
+    document.getElementById('cam-status').style.color = 'var(--muted)';
+    document.getElementById('cam-status').textContent = '● Reconnecting';
+    setTimeout(connectCamera, 2000);
+  };
+  cameraWs.onerror = () => cameraWs.close();
+}
+
+// ── Sensor display ────────────────────────────────────────────────────────────
+function updateSensors(data) {
+  const dist = data.distance_mm;
+  const el = document.getElementById('dist-val');
+  const fill = document.getElementById('dist-fill');
+  const badge = document.getElementById('obstacle-badge');
+
+  if (dist >= 9990) {
+    el.textContent = 'N/A';
+    el.className = 'sensor-val';
+    fill.style.width = '0%';
+  } else {
+    const mm = Math.min(dist, 2000);
+    el.textContent = `${dist} mm`;
+    el.className = 'sensor-val' + (dist < 150 ? ' danger' : dist < 300 ? ' warn' : '');
+    fill.style.width = `${(mm / 2000 * 100).toFixed(1)}%`;
+    fill.style.background = dist < 150 ? 'var(--danger)' : dist < 300 ? 'var(--warning)' : 'var(--success)';
+  }
+
+  if (data.obstacle) {
+    badge.className = 'obstacle-badge blocked';
+    badge.textContent = '⚠ OBSTACLE';
+  } else {
+    badge.className = 'obstacle-badge clear';
+    badge.textContent = '● CLEAR';
+  }
+
+  if (data.light_state) updateLightDisplay(data.light_state);
+
+  document.getElementById('sensor-ts').textContent = new Date().toLocaleTimeString();
+}
+
+// ── Light display ─────────────────────────────────────────────────────────────
+const LIGHT_META = {
+  idle:      { name: 'Idle',      desc: 'Dim white — waiting',     color: '#6868a0' },
+  listening: { name: 'Listening', desc: 'Green — capturing voice', color: '#00d4aa' },
+  thinking:  { name: 'Thinking',  desc: 'Blue — processing AI',    color: '#7c6af7' },
+  speaking:  { name: 'Speaking',  desc: 'Yellow — TTS output',     color: '#ffb347' },
+  treasure:  { name: 'Found!',    desc: 'Rainbow — treasure!',     color: '#ffd700' },
+  off:       { name: 'Off',       desc: 'Lights off',              color: '#333' },
+};
+
+function updateLightDisplay(state) {
+  const meta = LIGHT_META[state] || LIGHT_META.idle;
+  const ind = document.getElementById('light-indicator');
+  ind.className = `light-indicator light-state-${state}`;
+  document.getElementById('light-name').textContent = meta.name;
+  document.getElementById('light-desc').textContent = meta.desc;
+}
+
+// ── Controls ─────────────────────────────────────────────────────────────────
+async function move(direction) {
+  const dur = parseFloat(document.getElementById('duration').value);
+  const res = await fetch('/api/move', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ direction, duration: dur }),
+  });
+  const data = await res.json();
+  if (!data.ok && data.reason) {
+    // Flash warning
+    const msg = document.createElement('div');
+    msg.style.cssText = 'position:fixed;bottom:20px;right:20px;padding:12px 20px;' +
+      'background:var(--danger);color:#fff;border-radius:8px;font-size:.85rem;z-index:999;';
+    msg.textContent = '⚠ ' + data.reason;
+    document.body.appendChild(msg);
+    setTimeout(() => msg.remove(), 2500);
+  }
+}
+
+async function setLight(state) {
+  await fetch('/api/lights', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ state }),
+  });
+  updateLightDisplay(state);
+}
+
+async function emergencyStop() {
+  await fetch('/api/emergency-stop', { method: 'POST' });
+}
+
+// ── Keyboard shortcut ─────────────────────────────────────────────────────────
+document.addEventListener('keydown', (e) => {
+  if (e.target.tagName === 'INPUT') return;
+  const keyMap = {
+    ArrowUp:    'forward',
+    ArrowDown:  'backward',
+    ArrowLeft:  'rotate_left',
+    ArrowRight: 'rotate_right',
+    'a':        'strafe_left',
+    'd':        'strafe_right',
+    ' ':        'stop',
+  };
+  const dir = keyMap[e.key];
+  if (dir) {
+    e.preventDefault();
+    move(dir);
+  }
+});
+
+// ── Init ─────────────────────────────────────────────────────────────────────
+connectSensors();
+connectCamera();
+</script>
+</body>
+</html>
