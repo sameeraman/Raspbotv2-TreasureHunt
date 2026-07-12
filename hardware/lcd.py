@@ -56,7 +56,9 @@ class LCDDisplay:
                 for addr in _I2C_ADDRESSES:
                     try:
                         serial = i2c(port=bus, address=addr)
-                        device = ssd1306(serial)
+                        # Explicitly declare 128×32 — default is 128×64 which
+                        # sends the wrong init sequence and garbles the display.
+                        device = ssd1306(serial, width=128, height=32)
 
                         # Smoke-test: verify rendering actually works
                         with canvas(device) as draw:
@@ -155,10 +157,12 @@ class LCDDisplay:
         try:
             from luma.core.render import canvas  # type: ignore
             from PIL import ImageFont
+            # Pillow 10+ load_default() defaults to 10px — force 8px so 4 lines
+            # fit on the 32px display without overlap.
             try:
-                font = ImageFont.load_default()
-            except Exception:
-                font = None
+                font = ImageFont.load_default(size=8)
+            except TypeError:
+                font = ImageFont.load_default()  # Pillow < 10 fallback
         except ImportError:
             return
 
@@ -181,16 +185,3 @@ class LCDDisplay:
                 logger.error(f"LCD update error: {e}")
 
             time.sleep(2)
-
-
-import glob
-import os
-import threading
-import time
-from typing import Optional
-
-try:
-    import psutil
-    _HAS_PSUTIL = True
-except ImportError:
-    _HAS_PSUTIL = False
