@@ -49,6 +49,8 @@ class TreasureHuntApp:
         # Initialised here so _on_wake_command is safe even before run() is called
         self._session_active = False
         self._interrupt_requested = False
+        self._session_task: asyncio.Task | None = None   # cancellable session task
+        self._loop: asyncio.AbstractEventLoop | None = None  # set in run()
 
         # Create token provider from service principal
         token_provider = self.config.service_principal.get_token_provider()
@@ -154,6 +156,7 @@ class TreasureHuntApp:
         _web._camera = self.camera
         _web._tts = self.tts
         _web._hw_ready = True
+        _web._voice_stop_callback = self._cancel_session  # emergency stop hook
 
         # ── Start web dashboard in background (port 8080) ─────────────────────
         def _start_uvicorn():
@@ -176,6 +179,9 @@ class TreasureHuntApp:
         self.lcd.set_state("idle")
         self.lcd.start()
 
+        # Store loop reference so _cancel_session() can reach it from any thread
+        self._loop = asyncio.get_event_loop()
+
         logger.info("Waiting for wake word 'Hey Ringo'...")
         logger.info("(Press Ctrl+C to quit)")
 
@@ -194,13 +200,9 @@ class TreasureHuntApp:
         Ringo stops speaking and listens fresh.
         """
         if command in _WAKE_COMMAND_NAMES and self._session_active:
-            logger.info("Wake word interrupt detected mid-session")
+            logger.info("Wake word interrupt — cancelling session")
             self._interrupt_requested = True
-            # Stop any in-progress TTS immediately
-            try:
-                self.tts.stop_speaking()
-            except Exception:
-                pass
+            self._cancel_session()
 
     async def _ai_call(self, coro):
         """Run an AI coroutine while blinking the thinking light every 0.5 s.
@@ -227,6 +229,36 @@ class TreasureHuntApp:
             blink.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await blink
+
+    def _cancel_session(self):
+        """Cancel the running session task from any thread.
+
+        Called by:
+          - wake word interrupt  (_on_wake_command, serial thread)
+          - web emergency stop   (web/server.py, uvicorn thread)
+          - Ctrl+C               (asyncio.run cancels all tasks automatically)
+        """
+        # Immediate hardware safety — synchronous, safe from any thread
+        try:
+            self.motor.stop()
+        except Exception:
+            pass
+        try:
+            self.tts.stop_speaking()
+        except Exception:
+            pass
+        # Schedule task cancellation on the asyncio event loop
+        task = self._session_task
+        loop = self._loop
+        if task and not task.done() and loop and not loop.is_closed():
+            loop.call_soon_threadsafe(task.cancel)
+            logger.info("Session task cancellation scheduled")
+
+    async def _run_full_session(self):
+        """Chat then optional hunt — the single cancellable unit per wake word."""
+        hunt_requested = await self._run_chat_session()
+        if hunt_requested and self._running:
+            await self._run_hunt_session()
 
     async def _run_chat_session(self) -> bool:
         """Casual chat mode after wake word.
@@ -378,12 +410,23 @@ class TreasureHuntApp:
         await asyncio.sleep(0.8)
 
         # Chat mode first; transitions to hunt only if Sienna asks
-        hunt_requested = await self._run_chat_session()
-        if hunt_requested and self._running:
-            await self._run_hunt_session()
+        self._session_task = asyncio.create_task(self._run_full_session())
+        try:
+            await self._session_task
+        except asyncio.CancelledError:
+            logger.info("Session stopped by external interrupt")
+        finally:
+            self._session_task = None
+            self._session_active = False
+            self.lights.idle()
+            self.lcd.set_state("idle")
+            try:
+                self.motor.stop()      # safety — ensure motors stop
+            except Exception:
+                pass
 
         # Drain any stale wake word trigger that fired during the session
-        # and add a cooldown so STT isn't immediately reopened.
+        # and add a cooldown so STT isn’t immediately reopened.
         self.wake_word.is_triggered()
         await asyncio.sleep(3)
 

@@ -99,6 +99,7 @@ _camera = None
 _tts = None
 _pending_stop: asyncio.Task | None = None
 _light_state = "idle"
+_voice_stop_callback = None   # set by main.py to cancel the voice session
 
 # Current audio levels — initialised from .env, adjustable via /api/audio
 _current_speaker_vol: int = int(os.getenv("SPEAKER_VOLUME") or "95")
@@ -264,6 +265,12 @@ async def api_emergency_stop():
     if _lights:
         _lights.off()
         _light_state = "off"
+    # Cancel the voice session if one is running (voice mode)
+    if _voice_stop_callback:
+        try:
+            _voice_stop_callback()
+        except Exception:
+            pass
     _stop_session("EMERGENCY STOP")
     logging.getLogger("ringo.web").warning("🛑 EMERGENCY STOP activated")
     return {"ok": True}
