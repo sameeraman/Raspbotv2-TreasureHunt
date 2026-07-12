@@ -124,10 +124,11 @@ class TreasureHuntApp:
         else:
             logger.info("Memory system disabled (no Azure Search config)")
 
-        # Orchestrator
+        # Orchestrator — uses agent-framework; needs ClientSecretCredential for
+        # Azure AD token auth. self._speech_credential is already the right type.
         self.orchestrator = RingoOrchestrator(
             openai_config=self.config.azure_openai,
-            token_provider=token_provider,
+            credential=self._speech_credential,
             vision_plugin=self.vision_plugin,
             movement_plugin=self.movement_plugin,
             safety_plugin=self.safety_plugin,
