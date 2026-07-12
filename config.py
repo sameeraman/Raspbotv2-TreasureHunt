@@ -35,7 +35,7 @@ class ServicePrincipalConfig:
 @dataclass
 class AzureOpenAIConfig:
     endpoint: str = os.getenv("AZURE_OPENAI_ENDPOINT", "")
-    api_version: str = os.getenv("AZURE_OPENAI_API_VERSION", "2024-12-01-preview")
+    api_version: str = os.getenv("AZURE_OPENAI_API_VERSION", "2025-01-01-preview")
     orchestrator_deployment: str = os.getenv("AZURE_OPENAI_ORCHESTRATOR_DEPLOYMENT", "gpt-5.4-mini")
     vision_deployment: str = os.getenv("AZURE_OPENAI_VISION_DEPLOYMENT", "gpt-5.4")
     planner_deployment: str = os.getenv("AZURE_OPENAI_PLANNER_DEPLOYMENT", "o3")
