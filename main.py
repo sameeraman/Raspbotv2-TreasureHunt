@@ -12,6 +12,7 @@ import asyncio
 import contextlib
 import logging
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -252,7 +253,7 @@ class TreasureHuntApp:
 
         self.lights.speaking()
         self.lcd.set_state("speaking")
-        self.tts.speak(self._bark_if_excited(greeting))
+        self.tts.speak(self._process_response(greeting))
         self.lights.listening()
         self.lcd.set_state("listening")
 
@@ -273,7 +274,7 @@ class TreasureHuntApp:
                     break
                 self.lights.speaking()
                 self.lcd.set_state("speaking")
-                self.tts.speak(self._bark_if_excited(close_msg))
+                self.tts.speak(self._process_response(close_msg))
                 self.lights.listening()
                 self.lcd.set_state("listening")
 
@@ -304,7 +305,7 @@ class TreasureHuntApp:
                     farewell = await self._ai_call(self.orchestrator.chat(user_text))
                     farewell = farewell.removeprefix("HUNT:").strip()
                     self.lights.speaking()
-                    self.tts.speak(self._bark_if_excited(farewell))
+                    self.tts.speak(self._process_response(farewell))
                 except Exception as e:
                     logger.error(f"Farewell response failed: {e}")
                 break
@@ -325,7 +326,7 @@ class TreasureHuntApp:
             if clean:
                 self.lights.speaking()
                 self.lcd.set_state("speaking")
-                self.tts.speak(self._bark_if_excited(clean))
+                self.tts.speak(self._process_response(clean))
                 self.lights.listening()
                 self.lcd.set_state("listening")
 
@@ -398,7 +399,7 @@ class TreasureHuntApp:
         greeting = await self._ai_call(self.orchestrator.start_treasure_hunt(memory_context=memory_context))
         self.lights.speaking()
         self.lcd.set_state("speaking")
-        self.tts.speak(self._bark_if_excited(greeting))
+        self.tts.speak(self._process_response(greeting))
         self.lights.listening()
         self.lcd.set_state("listening")
 
@@ -451,7 +452,7 @@ class TreasureHuntApp:
             # Speak the response — may be interrupted by wake word
             self.lights.speaking()
             self.lcd.set_state("speaking")
-            self.tts.speak(self._bark_if_excited(response))
+            self.tts.speak(self._process_response(response))
             self.lights.listening()
             self.lcd.set_state("listening")
 
@@ -470,7 +471,7 @@ class TreasureHuntApp:
 
         goodbye = await self._ai_call(self.orchestrator.end_session())
         self.lights.speaking()
-        self.tts.speak_excited(self._bark_if_excited(goodbye))
+        self.tts.speak_excited(self._process_response(goodbye))
         self.lights.found_treasure()  # Celebration lights
         self.motor.nod()
 
@@ -484,7 +485,7 @@ class TreasureHuntApp:
         return any(phrase in text_lower for phrase in goodbye_phrases)
 
     def _play_bark(self):
-        """Play dog-bark.wav non-blocking (for in-conversation excitement)."""
+        """Play dog-bark.wav non-blocking."""
         bark_path = os.path.join(os.path.dirname(__file__), "dog-bark.wav")
         speaker = os.getenv("SPEAKER_DEVICE", "plughw:3,0")
         try:
@@ -493,15 +494,45 @@ class TreasureHuntApp:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
-            time.sleep(0.6)  # brief pause so bark is heard before TTS starts
+            time.sleep(0.6)
         except Exception as e:
             logger.warning(f"Could not play bark: {e}")
 
-    def _bark_if_excited(self, text: str) -> str:
-        """Strip [BARK] from AI response and play the bark WAV if present."""
+    def _wag_lights(self):
+        """Quick warm orange flash — tail-wagging visual."""
+        for _ in range(3):
+            self.lights.set_color(255, 140, 0)
+            time.sleep(0.12)
+            self.lights.set_color(10, 10, 10)
+            time.sleep(0.12)
+        self.lights.speaking()  # restore
+
+    def _process_response(self, text: str) -> str:
+        """Pre-process AI response before TTS.
+
+        [BARK]   → play bark WAV, strip tag.
+        *action* → trigger physical action where possible, strip tag.
+        Returns clean text safe to pass to TTS.
+        """
+        # Handle [BARK]
         if "[BARK]" in text:
             text = text.replace("[BARK]", "").strip()
             self._play_bark()
+
+        # Handle *action* stage directions
+        def _do_action(match):
+            action = match.group(1).lower()
+            if any(k in action for k in ("tilt", "tilts", "tilting")):
+                threading.Thread(target=self.motor.shake_head, daemon=True).start()
+            elif any(k in action for k in ("wag", "tail", "wiggl")):
+                threading.Thread(target=self._wag_lights, daemon=True).start()
+            elif any(k in action for k in ("nod", "nods")):
+                threading.Thread(target=self.motor.nod, daemon=True).start()
+            # sniff, whimper, yawn, etc. — just strip
+            return ""
+
+        text = re.sub(r'\*([^*\n]{1,40})\*', _do_action, text)
+        text = re.sub(r' {2,}', ' ', text).strip()
         return text
 
     def _set_audio_levels(self):
