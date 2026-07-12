@@ -26,7 +26,7 @@ from azure.core.credentials import TokenCredential
 from pydantic import Field
 
 from agent_framework import Agent
-from agent_framework.openai import OpenAIChatClient
+from agent_framework.openai import OpenAIChatCompletionClient
 
 from config import AzureOpenAIConfig
 from agents.prompts import (
@@ -70,10 +70,10 @@ class RingoOrchestrator:
         self._memory_plugin = memory_plugin
 
         # Shared chat client for the orchestrator
-        self._chat_client = OpenAIChatClient(
+        self._chat_client = OpenAIChatCompletionClient(
             azure_endpoint=openai_config.endpoint,
             model=openai_config.orchestrator_deployment,
-            api_version=openai_config.api_version,   # >= 2025-03-01-preview
+            api_version=openai_config.api_version,
             credential=credential,
         )
 

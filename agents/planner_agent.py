@@ -15,7 +15,7 @@ The Planner has NO tools — it reasons purely from the task description.
 from azure.core.credentials import TokenCredential
 
 from agent_framework import Agent
-from agent_framework.openai import OpenAIChatClient
+from agent_framework.openai import OpenAIChatCompletionClient
 
 from config import AzureOpenAIConfig
 from utils import setup_logger
@@ -60,7 +60,7 @@ class PlannerAgent:
         openai_config: AzureOpenAIConfig,
         credential: TokenCredential,
     ):
-        client = OpenAIChatClient(
+        client = OpenAIChatCompletionClient(
             azure_endpoint=openai_config.endpoint,
             model=openai_config.planner_deployment,   # o3 — deep reasoning
             api_version=openai_config.api_version,

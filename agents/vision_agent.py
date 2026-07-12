@@ -16,7 +16,7 @@ from azure.core.credentials import TokenCredential
 from pydantic import Field
 
 from agent_framework import Agent
-from agent_framework.openai import OpenAIChatClient
+from agent_framework.openai import OpenAIChatCompletionClient
 
 from config import AzureOpenAIConfig
 from plugins.vision import VisionPlugin
@@ -46,7 +46,7 @@ class VisionAgent:
     ):
         self._vision = vision_plugin
 
-        client = OpenAIChatClient(
+        client = OpenAIChatCompletionClient(
             azure_endpoint=openai_config.endpoint,
             model=openai_config.orchestrator_deployment,   # lightweight — vision processing is inside the plugin
             api_version=openai_config.api_version,
