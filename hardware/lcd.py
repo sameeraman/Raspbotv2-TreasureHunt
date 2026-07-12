@@ -50,26 +50,32 @@ class LCDDisplay:
         try:
             from luma.oled.device import ssd1306        # type: ignore
             from luma.core.interface.serial import i2c  # type: ignore
+            from luma.core.render import canvas          # type: ignore
 
             for bus in _I2C_BUS_CANDIDATES:
                 for addr in _I2C_ADDRESSES:
                     try:
                         serial = i2c(port=bus, address=addr)
                         device = ssd1306(serial)
+
+                        # Smoke-test: verify rendering actually works
+                        with canvas(device) as draw:
+                            draw.text((0, 0), "Ringo!", fill="white")
+
                         self._device = device
                         logger.info(
                             f"OLED initialised (luma.oled, I2C bus={bus} addr=0x{addr:02X})"
                         )
                         return
-                    except Exception:
+                    except Exception as e:
+                        logger.warning(f"OLED: bus={bus} addr=0x{addr:02X} failed: {e}")
                         continue
 
             logger.warning(
-                "OLED: SSD1306 not found on any I2C bus. "
-                "Run 'i2cdetect -y 1' on the robot to check connections."
+                "OLED: SSD1306 not found — check warnings above for the specific error."
             )
 
-        except ImportError:
+        except ImportError as e:
             logger.warning(
                 "OLED: luma.oled not installed. Run: pip install luma.oled"
             )

@@ -351,6 +351,16 @@ class TreasureHuntApp:
         if not self._running:
             return
 
+        # Release the TTS audio device before playing the bark.
+        # The Azure SpeechSynthesizer holds an exclusive lock on the ALSA
+        # device while cached; releasing it here lets aplay open the device.
+        try:
+            if self.tts._synthesizer:
+                self.tts._synthesizer.stop_speaking_async().get()
+            self.tts._synthesizer = None
+        except Exception:
+            pass
+
         # Play dog bark as acknowledgement
         bark_path = os.path.join(os.path.dirname(__file__), "dog-bark.wav")
         speaker = os.getenv("SPEAKER_DEVICE", "plughw:3,0")
