@@ -9,6 +9,7 @@ This is the main loop that ties everything together:
 """
 
 import asyncio
+import contextlib
 import logging
 import os
 import signal
@@ -23,6 +24,7 @@ from hardware.motor import MotorController
 from hardware.camera import Camera
 from hardware.ultrasonic import UltrasonicSensor
 from hardware.lights import LightController
+from hardware.lcd import LCDDisplay
 from speech.stt import SpeechToText
 from speech.tts import TextToSpeech
 from services.embedding import EmbeddingService
@@ -61,6 +63,7 @@ class TreasureHuntApp:
             stop_distance_mm=self.config.safety.obstacle_stop_distance_mm,
         )
         self.lights = LightController()
+        self.lcd = LCDDisplay()
 
         # Wake word: hardware serial or Porcupine (set WAKE_WORD_ENGINE in .env)
         self.wake_word = create_wake_word_listener(
@@ -168,6 +171,8 @@ class TreasureHuntApp:
         self.camera.open()
         self.wake_word.start()
         self.lights.idle()
+        self.lcd.set_state("idle")
+        self.lcd.start()
 
         logger.info("Waiting for wake word 'Hey Ringo'...")
         logger.info("(Press Ctrl+C to quit)")
@@ -195,6 +200,32 @@ class TreasureHuntApp:
             except Exception:
                 pass
 
+    async def _ai_call(self, coro):
+        """Run an AI coroutine while blinking the thinking light every 0.5 s.
+
+        Bright blue ↔ very dim blue gives clear visual feedback of cloud latency.
+        Sets LCD state to 'thinking' for the duration.
+        """
+        self.lcd.set_state("thinking")
+
+        async def _blink():
+            bright = True
+            while True:
+                if bright:
+                    self.lights.set_color(0, 80, 255)
+                else:
+                    self.lights.set_color(5, 5, 25)
+                bright = not bright
+                await asyncio.sleep(0.5)
+
+        blink = asyncio.create_task(_blink())
+        try:
+            return await coro
+        finally:
+            blink.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await blink
+
     async def _run_chat_session(self) -> bool:
         """Casual chat mode after wake word.
 
@@ -207,20 +238,23 @@ class TreasureHuntApp:
         self._session_active = True
         self._interrupt_requested = False
         self.lights.listening()
+        self.lcd.set_state("listening")
 
         self.orchestrator.switch_to_chat_mode()
 
         # Greet Sienna
         try:
-            greeting = await self.orchestrator.start_chat()
+            greeting = await self._ai_call(self.orchestrator.start_chat())
         except Exception as e:
             logger.error(f"Chat greeting failed: {e}")
             self._session_active = False
             return False
 
         self.lights.speaking()
-        self.tts.speak(greeting)
+        self.lcd.set_state("speaking")
+        self.tts.speak(self._bark_if_excited(greeting))
         self.lights.listening()
+        self.lcd.set_state("listening")
 
         chat_start = time.time()
         timeout_offered = False
@@ -233,13 +267,15 @@ class TreasureHuntApp:
                 timeout_offered = True
                 logger.info("Chat timeout reached — proposing to close")
                 try:
-                    close_msg = await self.orchestrator.propose_close()
+                    close_msg = await self._ai_call(self.orchestrator.propose_close())
                 except Exception as e:
                     logger.error(f"Propose close failed: {e}")
                     break
                 self.lights.speaking()
-                self.tts.speak(close_msg)
+                self.lcd.set_state("speaking")
+                self.tts.speak(self._bark_if_excited(close_msg))
                 self.lights.listening()
+                self.lcd.set_state("listening")
 
             # Wake word interrupt mid-chat
             if self._interrupt_requested:
@@ -265,20 +301,21 @@ class TreasureHuntApp:
 
             if self._is_goodbye(user_text):
                 try:
-                    farewell = await self.orchestrator.chat(user_text)
+                    farewell = await self._ai_call(self.orchestrator.chat(user_text))
                     farewell = farewell.removeprefix("HUNT:").strip()
                     self.lights.speaking()
-                    self.tts.speak(farewell)
+                    self.tts.speak(self._bark_if_excited(farewell))
                 except Exception as e:
                     logger.error(f"Farewell response failed: {e}")
                 break
 
             # Get Ringo's response
-            self.lights.thinking()
             try:
-                response = await self.orchestrator.chat(user_text)
+                response = await self._ai_call(self.orchestrator.chat(user_text))
             except Exception as e:
                 logger.error(f"Chat response failed: {e}")
+                self.lights.listening()
+                self.lcd.set_state("listening")
                 continue
 
             # HUNT: prefix signals Sienna asked for a treasure hunt
@@ -287,8 +324,10 @@ class TreasureHuntApp:
 
             if clean:
                 self.lights.speaking()
-                self.tts.speak(clean)
+                self.lcd.set_state("speaking")
+                self.tts.speak(self._bark_if_excited(clean))
                 self.lights.listening()
+                self.lcd.set_state("listening")
 
             if hunt_requested:
                 logger.info("Treasure hunt requested — transitioning to hunt mode")
@@ -297,6 +336,7 @@ class TreasureHuntApp:
 
         self._session_active = False
         self.lights.idle()
+        self.lcd.set_state("idle")
         return False
 
     async def _wait_and_play(self):
@@ -341,6 +381,7 @@ class TreasureHuntApp:
         self._session_active = True
         self._interrupt_requested = False
         self.lights.listening()
+        self.lcd.set_state("listening")
         self.safety_plugin.start_session()
 
         # Initialize memory for this session
@@ -354,10 +395,12 @@ class TreasureHuntApp:
         self.orchestrator.reset_history(memory_context=memory_context)
 
         # Greet Sienna (with memory context if available)
-        greeting = await self.orchestrator.start_treasure_hunt(memory_context=memory_context)
+        greeting = await self._ai_call(self.orchestrator.start_treasure_hunt(memory_context=memory_context))
         self.lights.speaking()
-        self.tts.speak(greeting)
+        self.lcd.set_state("speaking")
+        self.tts.speak(self._bark_if_excited(greeting))
         self.lights.listening()
+        self.lcd.set_state("listening")
 
         # Main conversation loop
         while self._running:
@@ -399,8 +442,7 @@ class TreasureHuntApp:
                 break
 
             # Process through the orchestrator
-            self.lights.thinking()
-            response = await self.orchestrator.chat(user_text)
+            response = await self._ai_call(self.orchestrator.chat(user_text))
 
             # Auto-observe for memory (Phase 2)
             if self.memory_manager:
@@ -408,10 +450,14 @@ class TreasureHuntApp:
 
             # Speak the response — may be interrupted by wake word
             self.lights.speaking()
-            self.tts.speak(response)
+            self.lcd.set_state("speaking")
+            self.tts.speak(self._bark_if_excited(response))
+            self.lights.listening()
+            self.lcd.set_state("listening")
 
         self._session_active = False
         self.lights.idle()
+        self.lcd.set_state("idle")
 
     async def _end_session(self):
         """End the current play session gracefully."""
@@ -422,9 +468,9 @@ class TreasureHuntApp:
         if self.memory_manager:
             await self.memory_manager.end_session_summary()
 
-        goodbye = await self.orchestrator.end_session()
+        goodbye = await self._ai_call(self.orchestrator.end_session())
         self.lights.speaking()
-        self.tts.speak_excited(goodbye)
+        self.tts.speak_excited(self._bark_if_excited(goodbye))
         self.lights.found_treasure()  # Celebration lights
         self.motor.nod()
 
@@ -436,6 +482,27 @@ class TreasureHuntApp:
         ]
         text_lower = text.lower()
         return any(phrase in text_lower for phrase in goodbye_phrases)
+
+    def _play_bark(self):
+        """Play dog-bark.wav non-blocking (for in-conversation excitement)."""
+        bark_path = os.path.join(os.path.dirname(__file__), "dog-bark.wav")
+        speaker = os.getenv("SPEAKER_DEVICE", "plughw:3,0")
+        try:
+            subprocess.Popen(
+                ["aplay", "-D", speaker, bark_path],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            time.sleep(0.6)  # brief pause so bark is heard before TTS starts
+        except Exception as e:
+            logger.warning(f"Could not play bark: {e}")
+
+    def _bark_if_excited(self, text: str) -> str:
+        """Strip [BARK] from AI response and play the bark WAV if present."""
+        if "[BARK]" in text:
+            text = text.replace("[BARK]", "").strip()
+            self._play_bark()
+        return text
 
     def _set_audio_levels(self):
         """Set ALSA speaker and microphone levels from environment variables.
@@ -452,35 +519,48 @@ class TreasureHuntApp:
 
         speaker_vol = os.getenv("SPEAKER_VOLUME", "").strip()
         if speaker_vol:
-            try:
-                result = subprocess.run(
-                    ["amixer", *card_flag, "-q", "sset", "Master", f"{speaker_vol}%"],
-                    timeout=3, capture_output=True,
+            # USB audio cards use different control names than built-in cards.
+            # Try in priority order until one succeeds.
+            for ctrl in ("PCM", "Speaker", "Headphone", "Master"):
+                try:
+                    r = subprocess.run(
+                        ["amixer", *card_flag, "-q", "sset", ctrl, f"{speaker_vol}%"],
+                        timeout=3, capture_output=True,
+                    )
+                    if r.returncode == 0:
+                        logger.info(f"Speaker ({ctrl}) volume set to {speaker_vol}%")
+                        break
+                except Exception:
+                    continue
+            else:
+                logger.warning(
+                    "Speaker volume: no working ALSA control found. "
+                    f"Run 'amixer -c {os.getenv('ALSA_CARD','0')} scontrols' to list available controls."
                 )
-                if result.returncode == 0:
-                    logger.info(f"Speaker (Master) volume set to {speaker_vol}%")
-                else:
-                    logger.warning(f"amixer Master failed: {result.stderr.decode().strip()}")
-            except Exception as e:
-                logger.warning(f"Could not set speaker volume: {e}")
 
         mic_vol = os.getenv("MIC_VOLUME", "").strip()
         if mic_vol:
-            try:
-                result = subprocess.run(
-                    ["amixer", *card_flag, "-q", "sset", "Capture", f"{mic_vol}%"],
-                    timeout=3, capture_output=True,
+            for ctrl in ("Mic", "Microphone", "Capture", "Mic Capture Volume"):
+                try:
+                    r = subprocess.run(
+                        ["amixer", *card_flag, "-q", "sset", ctrl, f"{mic_vol}%"],
+                        timeout=3, capture_output=True,
+                    )
+                    if r.returncode == 0:
+                        logger.info(f"Mic ({ctrl}) volume set to {mic_vol}%")
+                        break
+                except Exception:
+                    continue
+            else:
+                logger.warning(
+                    "Mic volume: no working ALSA control found. "
+                    f"Run 'amixer -c {os.getenv('ALSA_CARD','0')} scontrols' to list available controls."
                 )
-                if result.returncode == 0:
-                    logger.info(f"Mic (Capture) volume set to {mic_vol}%")
-                else:
-                    logger.warning(f"amixer Capture failed: {result.stderr.decode().strip()}")
-            except Exception as e:
-                logger.warning(f"Could not set mic volume: {e}")
 
     def _cleanup(self):
         """Clean shutdown of all hardware."""
         logger.info("Cleaning up...")
+        self.lcd.stop()
         self.wake_word.stop()
         self.camera.close()
         self.motor.stop()

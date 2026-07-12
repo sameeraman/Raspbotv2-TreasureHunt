@@ -97,6 +97,7 @@ _lights = None
 _ultra = None
 _camera = None
 _tts = None
+_pending_stop: asyncio.Task | None = None
 _light_state = "idle"
 
 # Current audio levels — initialised from .env, adjustable via /api/audio
@@ -254,7 +255,10 @@ async def api_session_stop():
 
 @app.post("/api/emergency-stop")
 async def api_emergency_stop():
-    global _light_state
+    global _light_state, _pending_stop
+    if _pending_stop and not _pending_stop.done():
+        _pending_stop.cancel()
+        _pending_stop = None
     if _motor:
         _motor.stop()
     if _lights:
@@ -273,46 +277,57 @@ class MoveRequest(BaseModel):
     speed: int = 50
 
 
+async def _schedule_stop(delay: float):
+    """Asyncio-native guaranteed motor stop after `delay` seconds.
+
+    Using asyncio.sleep (not time.sleep in a thread) means the stop fires
+    precisely on the event loop and cannot race with another command's stop.
+    """
+    await asyncio.sleep(delay)
+    if _motor:
+        _motor.stop()
+        logging.getLogger("ringo.web").debug(f"Motor auto-stop after {delay:.2f}s")
+
+
 @app.post("/api/move")
 async def api_move(req: MoveRequest):
+    global _pending_stop
+
     if not _motor:
         return {"ok": False, "reason": "Hardware not ready"}
 
     log = logging.getLogger("ringo.web")
     speed = max(10, min(100, req.speed))
-    dur = max(0.1, min(3.0, req.duration))
-    d = req.direction
+    dur   = max(0.1, min(3.0, req.duration))
+    d     = req.direction
 
-    if d == "forward":
-        if _ultra and _ultra.is_obstacle_ahead():
+    # Cancel any previous timed stop so it cannot fire while a new command runs
+    if _pending_stop and not _pending_stop.done():
+        _pending_stop.cancel()
+        _pending_stop = None
+
+    if d in ("forward", "backward", "strafe_left", "strafe_right",
+             "rotate_left", "rotate_right"):
+        if d == "forward" and _ultra and _ultra.is_obstacle_ahead():
             log.warning("⚠ Obstacle ahead — forward blocked")
             return {"ok": False, "reason": "Obstacle detected"}
-        await asyncio.to_thread(_motor.move_forward, speed, dur)
-        log.info(f"▲ Forward {dur}s")
-    elif d == "backward":
-        await asyncio.to_thread(_motor.move_backward, speed, dur)
-        log.info(f"▼ Backward {dur}s")
-    elif d == "strafe_left":
-        await asyncio.to_thread(_motor.move_left, speed, dur)
-        log.info(f"◀ Strafe left {dur}s")
-    elif d == "strafe_right":
-        await asyncio.to_thread(_motor.move_right, speed, dur)
-        log.info(f"▶ Strafe right {dur}s")
-    elif d == "rotate_left":
-        await asyncio.to_thread(_motor.rotate_left, speed, dur)
-        log.info(f"↺ Rotate left {dur}s")
-    elif d == "rotate_right":
-        await asyncio.to_thread(_motor.rotate_right, speed, dur)
-        log.info(f"↻ Rotate right {dur}s")
+        _motor.start_drive(d, speed)
+        _pending_stop = asyncio.create_task(_schedule_stop(dur))
+        log.info(f"Move {d} {dur}s @ {speed}%")
+
     elif d == "stop":
+        # _pending_stop already cancelled above; hard-stop immediately
         _motor.stop()
         log.info("■ Stop")
+
     elif d == "nod":
         await asyncio.to_thread(_motor.nod)
         log.info("↕ Nod")
+
     elif d == "shake":
         await asyncio.to_thread(_motor.shake_head)
         log.info("↔ Shake head")
+
     else:
         return {"ok": False, "reason": f"Unknown direction: {d}"}
 
@@ -377,27 +392,45 @@ async def api_audio(req: AudioRequest):
 
     if req.speaker_volume is not None:
         vol = max(0, min(100, req.speaker_volume))
-        try:
-            subprocess.run(
-                ["amixer", *card_flag, "-q", "sset", "Master", f"{vol}%"],
-                timeout=3, capture_output=True,
+        for ctrl in ("PCM", "Speaker", "Headphone", "Master"):
+            try:
+                r = subprocess.run(
+                    ["amixer", *card_flag, "-q", "sset", ctrl, f"{vol}%"],
+                    timeout=3, capture_output=True,
+                )
+                if r.returncode == 0:
+                    _current_speaker_vol = vol
+                    log.info(f"🔊 Speaker ({ctrl}) volume → {vol}%")
+                    break
+            except Exception:
+                continue
+        else:
+            log.warning(
+                f"Speaker: no ALSA control found (tried PCM, Speaker, Headphone, Master). "
+                f"Run 'amixer -c {card or '0'} scontrols' to list available controls."
             )
             _current_speaker_vol = vol
-            log.info(f"🔊 Speaker volume → {vol}%")
-        except Exception as e:
-            log.warning(f"amixer Master failed: {e}")
 
     if req.mic_volume is not None:
         vol = max(0, min(100, req.mic_volume))
-        try:
-            subprocess.run(
-                ["amixer", *card_flag, "-q", "sset", "Capture", f"{vol}%"],
-                timeout=3, capture_output=True,
+        for ctrl in ("Mic", "Microphone", "Capture", "Mic Capture Volume"):
+            try:
+                r = subprocess.run(
+                    ["amixer", *card_flag, "-q", "sset", ctrl, f"{vol}%"],
+                    timeout=3, capture_output=True,
+                )
+                if r.returncode == 0:
+                    _current_mic_vol = vol
+                    log.info(f"🎤 Mic ({ctrl}) volume → {vol}%")
+                    break
+            except Exception:
+                continue
+        else:
+            log.warning(
+                f"Mic: no ALSA control found (tried Mic, Microphone, Capture). "
+                f"Run 'amixer -c {card or '0'} scontrols' to list available controls."
             )
             _current_mic_vol = vol
-            log.info(f"🎤 Mic volume → {vol}%")
-        except Exception as e:
-            log.warning(f"amixer Capture failed: {e}")
 
     if req.tts_volume is not None:
         vol = max(0, min(100, req.tts_volume))

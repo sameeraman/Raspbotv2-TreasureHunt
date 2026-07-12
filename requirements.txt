@@ -10,5 +10,7 @@ smbus2>=0.4.3
 pyaudio>=0.2.14
 numpy>=1.26.0
 Pillow>=10.0.0
+psutil>=5.9.0
+Adafruit-SSD1306>=1.6.2
 fastapi>=0.110.0
 uvicorn[standard]>=0.27.0

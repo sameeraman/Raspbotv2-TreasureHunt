@@ -109,6 +109,40 @@ class MotorController:
             self.bot.Ctrl_Car(3, 0, 0)
         logger.debug("Motors stopped")
 
+    def start_drive(self, direction: str, speed: int = 40):
+        """Start driving without auto-stop. Caller must call stop()."""
+        s = self._clamp_speed(speed)
+        if direction == "forward":
+            l1, l2, r1, r2 = self._set_deflection(s, 90)
+            self._drive(l1, l2, r1, r2)
+        elif direction == "backward":
+            l1, l2, r1, r2 = self._set_deflection(s, 270)
+            self._drive(l1, l2, r1, r2)
+        elif direction == "strafe_left":
+            l1, l2, r1, r2 = self._set_deflection(s, 180)
+            self._drive(l1, l2, r1, r2)
+        elif direction == "strafe_right":
+            l1, l2, r1, r2 = self._set_deflection(s, 0)
+            self._drive(l1, l2, r1, r2)
+        elif direction == "rotate_left":
+            l1, l2, r1, r2 = self._set_deflection(s, 180)
+            if self.bot:
+                self.bot.Ctrl_Muto(0, l1)
+                self.bot.Ctrl_Muto(1, -l2)
+                self.bot.Ctrl_Muto(2, r1)
+                self.bot.Ctrl_Muto(3, abs(r2))
+        elif direction == "rotate_right":
+            l1, l2, r1, r2 = self._set_deflection(s, 0)
+            if self.bot:
+                self.bot.Ctrl_Muto(0, l1)
+                self.bot.Ctrl_Muto(1, abs(l2))
+                self.bot.Ctrl_Muto(2, r1)
+                self.bot.Ctrl_Muto(3, -r2)
+        else:
+            logger.warning(f"start_drive: unknown direction '{direction}'")
+            return
+        logger.debug(f"Motor started: {direction} speed={s}")
+
     def nod(self):
         """Camera PTZ nod gesture (yes)."""
         logger.info("Nodding")
